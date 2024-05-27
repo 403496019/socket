@@ -1,16 +1,15 @@
 /******************************************************************************
-* echo_server.c                                                               *
-*                                                                             *
-* Description: This file contains the C source code for an echo server.  The  *
-*              server runs on a hard-coded port and simply write back anything*
-*              sent to it by connected clients.  It does not support          *
-*              concurrent clients.                                            *
-*                                                                             *
-* Authors: Athula Balachandran <abalacha@cs.cmu.edu>,                         *
-*          Wolf Richter <wolf@cs.cmu.edu>                                     *
-*                                                                             *
-*******************************************************************************/
-
+ * echo_server.c                                                               *
+ *                                                                             *
+ * Description: This file contains the C source code for an echo server.  The  *
+ *              server runs on a hard-coded port and simply write back anything*
+ *              sent to it by connected clients.  It does not support          *
+ *              concurrent clients.                                            *
+ *                                                                             *
+ * Authors: Athula Balachandran <abalacha@cs.cmu.edu>,                         *
+ *          Wolf Richter <wolf@cs.cmu.edu>                                     *
+ *                                                                             *
+ *******************************************************************************/
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <stdio.h>
@@ -19,17 +18,15 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include "parse.h"
-#include <sys/stat.h>
+#include <sys/types.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 
 #define ECHO_PORT 9999
 #define BUF_SIZE 4096
 #define GET_SUCCESS 1
 #define GET_FAILURE 0
 #define URL_MAX_SIZE 256
-#define O_RDONLY 00
-#define S_ISREG 0100000
-#define S_IRUSR  00400
 
 int close_socket(int sock)
 {
@@ -41,30 +38,24 @@ int close_socket(int sock)
     return 0;
 }
 
-char c_get[50] = "GET";
-char c_post[50] = "POST";
-char c_head[50] = "HEAD";
+char RESPONSE_400[] = "HTTP/1.1 400 Bad request\r\n\r\n";
+char RESPONSE_404[] = "HTTP/1.1 404 Not Found\r\n\r\n";
+char RESPONSE_501[] = "HTTP/1.1 501 Not Implemented\r\n\r\n";
+char RESPONSE_505[] = "HTTP/1.1 505 HTTP Version not supported\r\n\r\n";
+char RESPONSE_200[] = "HTTP/1.1 200 OK\r\n\r\n";
 
-char RESPONSE_400[50] = "HTTP/1.1 400 Bad request\r\n\r\n";
-char RESPONSE_404[50] = "HTTP/1.1 404 Not Found\r\n\r\n";
-char RESPONSE_501[50] = "HTTP/1.1 501 Not Implemented\r\n\r\n";
-char RESPONSE_505[50] = "HTTP/1.1 505 HTTP Version not supported\r\n\r\n";
-char RESPONSE_200[50] = "HTTP/1.1 200 OK\r\n\r\n";
+char http_version_now[] = "HTTP/1.1"; 
+char root_path[] = "./static_site";
+char file_path[] = "/index.html";
 
-char http_version_now[50] = "HTTP/1.1"; 
-char root_path[50] = "./static_site";
-char file_path[50] = "/index.html";
-
-//FILE *log_file;
-
-int http_get(Request* request, char* URL, int client_sock, int readret, int sock)
+int http_get(Request* request, char* URL, int client_sock)
 {
-    struct stat* file_state = (struct stat*)malloc(sizeof(struct stat));
-    if(stat(URL, file_state) == -1)
+    struct stat file_state;
+    if(stat(URL, &file_state) == -1)
         return GET_FAILURE;
     
     int fd_in = open(URL, O_RDONLY);
-    if(!(S_ISREG & file_state->st_mode) || !(S_IRUSR & file_state->st_mode))
+    if(!S_ISREG(file_state.st_mode) || !(file_state.st_mode & S_IRUSR))
         return GET_FAILURE;
 
     if(fd_in < 0)
@@ -76,23 +67,22 @@ int http_get(Request* request, char* URL, int client_sock, int readret, int sock
     char response1[BUF_SIZE];
     char response2[BUF_SIZE];
     read(fd_in, response2, BUF_SIZE);
-    memcpy(response1, RESPONSE_200, sizeof(response1));
+    strcpy(response1, RESPONSE_200);
     strcat(response1, response2);
-    send(client_sock, response1, BUF_SIZE, 0);
+    send(client_sock, response1, strlen(response1), 0);
    
     close(fd_in);
-    free(file_state);
     return GET_SUCCESS;
 }
 
-int http_head(Request* requeset, char* URL, int client_sock, int readret, int sock)
+int http_head(Request* request, char* URL, int client_sock)
 {
-    struct stat* file_state = (struct stat*)malloc(sizeof(struct stat));
-    if(stat(URL, file_state) == -1)
+    struct stat file_state;
+    if(stat(URL, &file_state) == -1)
     {
         return GET_FAILURE;
     }
-    if(!(S_ISREG & file_state->st_mode) || !(S_IRUSR & file_state->st_mode))
+    if(!S_ISREG(file_state.st_mode) || !(file_state.st_mode & S_IRUSR))
     {    
         return GET_FAILURE;
     }
@@ -104,31 +94,28 @@ int http_head(Request* requeset, char* URL, int client_sock, int readret, int so
     }
 
     char response[BUF_SIZE];
-    strcat(response, RESPONSE_200);
+    strcpy(response, RESPONSE_200);
 
-    if (send(client_sock, response, readret, 0) != readret)
+    if (send(client_sock, response, strlen(response), 0) != strlen(response))
     {
         close_socket(client_sock);
-        close_socket(sock);
-        fprintf(stderr, "Error sending to client1.\n");
+        fprintf(stderr, "Error sending to client.\n");
         return GET_FAILURE;
     }
     close(fd_in);
-    free(file_state);
     return GET_SUCCESS;
 }
 
-int main(int argc, char* argv[])
+int main(int argc, char *argv[])
 {
     int sock, client_sock;
     ssize_t readret;
     socklen_t cli_size;
     struct sockaddr_in addr, cli_addr;
     char buf[BUF_SIZE];
-    //log_file = fopen("access_log", "w+");
 
     fprintf(stdout, "----- Echo Server -----\n");
-    
+
     if ((sock = socket(PF_INET, SOCK_STREAM, 0)) == -1)
     {
         fprintf(stderr, "Failed creating socket.\n");
@@ -139,7 +126,7 @@ int main(int argc, char* argv[])
     addr.sin_port = htons(ECHO_PORT);
     addr.sin_addr.s_addr = INADDR_ANY;
 
-    if (bind(sock, (struct sockaddr *) &addr, sizeof(addr)))
+    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)))
     {
         close_socket(sock);
         fprintf(stderr, "Failed binding socket.\n");
@@ -156,7 +143,7 @@ int main(int argc, char* argv[])
     while (1)
     {
         cli_size = sizeof(cli_addr);
-        if ((client_sock = accept(sock, (struct sockaddr *) &cli_addr, &cli_size)) == -1)
+        if ((client_sock = accept(sock, (struct sockaddr *)&cli_addr, &cli_size)) == -1)
         {
             close(sock);
             fprintf(stderr, "Error accepting connection.\n");
@@ -164,182 +151,90 @@ int main(int argc, char* argv[])
         }
 
         readret = 0;
+        memset(buf, 0, BUF_SIZE);
 
-        while((readret = recv(client_sock, buf, BUF_SIZE, 0)) >= 1)
+        while ((readret = recv(client_sock, buf, BUF_SIZE, 0)) >= 1)
         {
-            Request *request = parse(buf,readret,client_sock);
-            if(request == NULL)
+            Request *request = parse(buf, readret, client_sock);
+            if (request == NULL)
             {
-                //fprintf(log_file, "Parse failed.\n");
-                memset(buf, 0, BUF_SIZE);
-                memcpy(buf, RESPONSE_400, sizeof(RESPONSE_400));
-                //fprintf(log_file, "%s - - \"%s %s %s\" %s %ld\n", request->headers[0].header_value, request->http_method, request->http_uri, request->http_version, "400", strlen(RESPONSE_400));
-                //fflush(log_file);
-                if (send(client_sock, buf, readret, 0) != readret)
-                {
-                    close_socket(client_sock);
-                    close_socket(sock);
-                    fprintf(stderr, "Error sending to client3.\n");
-                    return EXIT_FAILURE;
-                }
+                send(client_sock, RESPONSE_400, strlen(RESPONSE_400), 0);
             }
-            else if(strcmp(request->http_version, http_version_now) != 0)
+            else if (strcmp(request->http_version, http_version_now) != 0)
             {
-                memset(buf, 0, BUF_SIZE);
-                memcpy(buf, RESPONSE_505, sizeof(RESPONSE_505));
-                //fprintf(log_file, "%s - - \"%s %s %s\" %s %ld\n", request->headers[0].header_value, request->http_method, request->http_uri, request->http_version, "505", strlen(RESPONSE_505));
-                //fflush(log_file);
-                if (send(client_sock, buf, readret, 0) != readret)
-                {
-                    close_socket(client_sock);
-                    close_socket(sock);
-                    fprintf(stderr, "Error sending to client4.\n");
-                    return EXIT_FAILURE;
-                }
-                free(request->headers);
-                free(request);
+                send(client_sock, RESPONSE_505, strlen(RESPONSE_505), 0);
             }
-            else if(!strcmp(request->http_method, c_post))
+            else if (strcmp(request->http_method, "POST") == 0)
             {
-                if (send(client_sock, buf, readret, 0) != readret)
-                {
-                    close_socket(client_sock);
-                    close_socket(sock);
-                    fprintf(stderr, "Error sending to client5.\n");
-                    return EXIT_FAILURE;
-                }
-                free(request->headers);
-                free(request);
+                send(client_sock, RESPONSE_200, strlen(RESPONSE_200), 0);
             }
-            else if(!strcmp(request->http_method, c_get))
+            else if (strcmp(request->http_method, "GET") == 0)
             {
-                char get_URL[BUF_SIZE];
+                char get_URL[URL_MAX_SIZE];
                 memset(get_URL, 0, sizeof(get_URL));
                 strcat(get_URL, root_path);
-                int get_flag = GET_SUCCESS;
-                if(strcmp(request->http_uri, "/") == 0)
+                if (strcmp(request->http_uri, "/") == 0)
                     strcat(get_URL, file_path);
-                else if(sizeof(request->http_uri) + sizeof(root_path) < URL_MAX_SIZE)
+                else if (strlen(request->http_uri) + strlen(root_path) < URL_MAX_SIZE)
                     strcat(get_URL, request->http_uri);
                 else
                 {
-                    get_flag = GET_FAILURE;
-                    memset(buf, 0, sizeof(buf));
-                    memcpy(buf, RESPONSE_404, sizeof(RESPONSE_404));
-                    //fprintf(log_file, "%s - - \"%s %s %s\" %s %ld\n", request->headers[0].header_value, request->http_method, request->http_uri, request->http_version, "404", strlen(RESPONSE_404));
-                    //fflush(log_file);
-                    if (send(client_sock, buf, readret, 0) != readret)
-                    {
-                        close_socket(client_sock);
-                        close_socket(sock);
-                        fprintf(stderr, "Error sending to client6.\n");
-                        return EXIT_FAILURE;
-                    }
+                    send(client_sock, RESPONSE_404, strlen(RESPONSE_404), 0);
+                    continue;
                 }
-                if(get_flag == GET_SUCCESS)
+
+                if (http_get(request, get_URL, client_sock) == GET_FAILURE)
                 {
-                    int get_state = http_get(request, get_URL, client_sock, readret, sock);
-                    if(get_state == GET_FAILURE)
-                    {
-                        memset(buf, 0, sizeof(buf));
-                        memcpy(buf, RESPONSE_404, sizeof(RESPONSE_404));
-                        //fprintf(log_file, "%s - - \"%s %s %s\" %s %ld\n", request->headers[0].header_value, request->http_method, request->http_uri, request->http_version, "404", strlen(RESPONSE_404));
-                        //fflush(log_file);
-                        if (send(client_sock, buf, readret, 0) != readret)
-                        {
-                            close_socket(client_sock);
-                            close_socket(sock);
-                            fprintf(stderr, "Error sending to client7.\n");
-                            return EXIT_FAILURE;
-                        }
-                    }
+                    send(client_sock, RESPONSE_404, strlen(RESPONSE_404), 0);
                 }
-                free(request->headers);
-                free(request);
             }
-            else if(!strcmp(request->http_method, c_head))
+            else if (strcmp(request->http_method, "HEAD") == 0)
             {
-                char head_URL[BUF_SIZE];
+                char head_URL[URL_MAX_SIZE];
                 memset(head_URL, 0, sizeof(head_URL));
                 strcat(head_URL, root_path);
-                int head_flag = GET_SUCCESS;
-                if(strcmp(request->http_uri, "/") == 0)
+                if (strcmp(request->http_uri, "/") == 0)
                     strcat(head_URL, file_path);
-                else if(sizeof(request->http_uri) + sizeof(root_path) < URL_MAX_SIZE)
+                else if (strlen(request->http_uri) + strlen(root_path) < URL_MAX_SIZE)
                     strcat(head_URL, request->http_uri);
                 else
                 {
-                    head_flag = GET_FAILURE;
-                    memset(buf, 0, sizeof(buf));
-                    memcpy(buf, RESPONSE_404, sizeof(RESPONSE_404));
-                    //fprintf(log_file, "%s - - \"%s %s %s\" %s %ld\n", request->headers[0].header_value, request->http_method, request->http_uri, request->http_version, "404", strlen(RESPONSE_404));
-                    //fflush(log_file);
-                    if (send(client_sock, buf, readret, 0) != readret)
-                    {
-                        close_socket(client_sock);
-                        close_socket(sock);
-                        fprintf(stderr, "Error sending to client8.\n");
-                        return EXIT_FAILURE;
-                    }
+                    send(client_sock, RESPONSE_404, strlen(RESPONSE_404), 0);
+                    continue;
                 }
-                if(head_flag == GET_SUCCESS)
+
+                if (http_head(request, head_URL, client_sock) == GET_FAILURE)
                 {
-                    int head_state = http_head(request, head_URL, client_sock, readret, sock);
-                    if(head_state == GET_FAILURE)
-                    {
-                        memset(buf, 0, sizeof(buf));
-                        memcpy(buf, RESPONSE_404, sizeof(RESPONSE_404));
-                        //fprintf(log_file, "%s - - \"%s %s %s\" %s %ld\n", request->headers[0].header_value, request->http_method, request->http_uri, request->http_version, "404", strlen(RESPONSE_404));
-                        //fflush(log_file);
-                        if (send(client_sock, buf, readret, 0) != readret)
-                        {
-                            close_socket(client_sock);
-                            close_socket(sock);
-                            fprintf(stderr, "Error sending to client9.\n");
-                            return EXIT_FAILURE;
-                        }
-                    }
+                    send(client_sock, RESPONSE_404, strlen(RESPONSE_404), 0);
                 }
-                free(request->headers);
-                free(request);
             }
             else
             {
-                memset(buf, 0, sizeof(buf));
-                memcpy(buf, RESPONSE_501, sizeof(RESPONSE_501));
-                //fprintf(log_file, "%s - - \"%s %s %s\" %s %ld\n", request->headers[0].header_value, request->http_method, request->http_uri, request->http_version, "501", strlen(RESPONSE_404));
-                //fflush(log_file);
-                if (send(client_sock, buf, readret, 0) != readret)
-                {
-                    close_socket(client_sock);
-                    close_socket(sock);
-                    fprintf(stderr, "Error sending to client10.\n");
-                    return EXIT_FAILURE;
-                }
-                free(request->headers);
-                free(request);
+                send(client_sock, RESPONSE_501, strlen(RESPONSE_501), 0);
             }
-        } 
+
+            free(request->headers);
+            free(request);
+            memset(buf, 0, BUF_SIZE);
+        }
 
         if (readret == -1)
         {
             close_socket(client_sock);
             close_socket(sock);
-            fprintf(stderr, "Error reading from client socket12.\n");
+            fprintf(stderr, "Error reading from client socket.\n");
             return EXIT_FAILURE;
         }
 
         if (close_socket(client_sock))
         {
             close_socket(sock);
-            fprintf(stderr, "Error closing client socket11.\n");
+            fprintf(stderr, "Error closing client socket.\n");
             return EXIT_FAILURE;
         }
     }
 
-    //fclose(log_file);
     close_socket(sock);
+
     return EXIT_SUCCESS;
 }
-
-
